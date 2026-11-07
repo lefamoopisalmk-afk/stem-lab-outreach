@@ -1,4 +1,4 @@
-"""Build the STEM Lab robot head, its 5-second seamless loop, loop.blend and loop.glb.
+"""Build the STEM Lab robot head, its 5:00 seamless loop, loop.blend and loop.glb.
 Run: blender -b --factory-startup --python-exit-code 1 -P build_loop.py -- <out_dir>
 """
 import bpy, bmesh, sys, json, math, os, random
@@ -6,8 +6,8 @@ from math import radians, cos, sin, pi
 from mathutils import Quaternion, Vector, Matrix
 
 OUT = sys.argv[sys.argv.index("--") + 1]
-FPS, TOTAL_S = 24, 5
-END = FPS * TOTAL_S  # 120
+FPS, TOTAL_S = 24, 300
+END = FPS * TOTAL_S  # 7200
 
 # ---------------------------------------------------------------- scene reset
 for o in list(bpy.data.objects):
@@ -199,56 +199,197 @@ def P(x=0, y=0, z=0, yaw=0, pitch=0, roll=0, sx=1, sy=None, sz=None):
                 scl=(sx, sx if sy is None else sy, sx if sz is None else sz))
 
 
-# Root keyframes. Every key has flat tangents, so each move eases out of one pose and into the next.
-# Rotation stays under a full turn: a 360 degree spin would end on -q and leave the first and last keys different.
-KEYS = [
-    (0, P()),                                                            # rest
-    (14, P(z=-.17, pitch=5, sx=1.07, sy=1.07, sz=.9)),                   # anticipate: crouch
-    (34, P(z=.3, yaw=-34, roll=-6, sx=.95, sy=.95, sz=1.07)),            # spring up, turning left
-    (46, P(z=-.11, yaw=-42, roll=-3, sx=1.09, sy=1.09, sz=.88)),         # land and squash
-    (62, P(x=-.2, yaw=-50, roll=-8, z=.02)),                             # recover, looking left
-    (84, P(x=.2, y=-.25, yaw=50, roll=8, pitch=4, sx=1.12)),             # swing right and lean in
-    (102, P(z=-.04, yaw=12, pitch=13, sx=1.04)),                         # nod back toward the viewer
-    (END, P()),                                                          # same as the first key
+POSE = dict(
+    home=P(),
+    look_l=P(yaw=-30, roll=-4, z=.02),
+    look_r=P(yaw=30, roll=4, z=.02),
+    look_up=P(pitch=-16, z=.07),
+    nod=P(pitch=17, z=-.05),
+    tilt_l=P(roll=-13, yaw=-8),
+    tilt_r=P(roll=13, yaw=8),
+    crouch=P(z=-.17, sx=1.07, sy=1.07, sz=.9),
+    hop=P(z=.3, sx=.95, sy=.95, sz=1.07),
+    land=P(z=-.11, sx=1.09, sy=1.09, sz=.88),
+    lean_in=P(y=-.5, z=-.02, pitch=6, sx=1.13),
+    lean_back=P(y=.6, z=.04, pitch=-7, sx=.84),
+    slide_l=P(x=-.2, yaw=-16, roll=-7),
+    slide_r=P(x=.2, yaw=16, roll=7),
+    big=P(z=.03, sx=1.17),
+    small=P(z=-.1, sx=.78),
+    curious_l=P(x=-.12, y=-.25, yaw=-22, roll=-11, pitch=5, sx=1.06),
+    curious_r=P(x=.12, y=-.25, yaw=22, roll=11, pitch=5, sx=1.06),
+)
+
+# (pose, travel seconds, hold seconds) or ("SPIN", axis, direction, seconds)
+SEQ = [
+    # act 1: wake up and look around
+    ("look_l", 2.0, 1.6), ("home", 1.4, .8), ("look_r", 2.0, 1.6), ("home", 1.4, 1.0),
+    ("look_up", 1.6, 1.4), ("nod", 1.0, .3), ("look_up", .8, .3), ("nod", .8, .3), ("home", 1.2, 1.2),
+    ("tilt_l", 1.4, 1.2), ("tilt_r", 1.6, 1.2), ("home", 1.2, 1.4),
+    ("slide_l", 2.2, 1.4), ("slide_r", 2.8, 1.4), ("home", 1.8, 1.6),
+    # act 2: hops and leans
+    ("crouch", 1.0, .3), ("hop", .55, .05), ("land", .5, .2), ("home", .9, 1.2),
+    ("crouch", 1.0, .3), ("hop", .55, .05), ("land", .5, .2), ("hop", .55, .05), ("land", .5, .2), ("home", 1.0, 1.4),
+    ("lean_back", 2.0, .8), ("lean_in", 2.2, 1.8), ("nod", 1.2, .4), ("lean_in", 1.0, 1.0), ("home", 1.8, 1.2),
+    ("curious_l", 1.8, 1.8), ("curious_r", 2.2, 1.8), ("home", 1.6, 1.4),
+    # act 3: spin turns
+    ("crouch", 1.0, .3), ("SPIN", "Z", 1, 3.6), ("land", .6, .2), ("home", 1.0, 2.0),
+    ("look_l", 1.4, 1.0), ("look_r", 1.6, 1.0), ("home", 1.2, 1.2),
+    ("crouch", 1.0, .3), ("SPIN", "Z", -1, 3.6), ("land", .6, .2), ("home", 1.0, 2.0),
+    ("tilt_r", 1.2, 1.0), ("nod", 1.0, .5), ("home", 1.1, 1.4),
+    ("small", 2.4, 1.6), ("big", 2.6, 1.8), ("home", 1.8, 1.4),
+    # act 4: size play and curiosity
+    ("lean_back", 2.2, 1.2), ("look_up", 1.4, 1.0), ("lean_in", 2.2, 1.6), ("tilt_l", 1.2, 1.0), ("home", 1.4, 1.4),
+    ("small", 1.8, .8), ("hop", .9, .1), ("land", .6, .2), ("big", 1.2, 1.4), ("home", 1.4, 1.2),
+    ("slide_r", 1.8, 1.0), ("curious_r", 1.2, 1.4), ("slide_l", 2.6, 1.0), ("curious_l", 1.2, 1.4), ("home", 1.6, 1.8),
+    # act 5: flip, bow and settle back to the first pose
+    ("crouch", 1.2, .4), ("SPIN", "X", 1, 3.2), ("land", .6, .3), ("home", 1.0, 2.2),
+    ("nod", 1.4, 1.2), ("home", 1.2, 1.0), ("look_l", 1.4, .8), ("look_r", 1.6, .8), ("home", 1.2, 1.4),
+    ("crouch", 1.2, .4), ("SPIN", "X", -1, 3.2), ("land", .6, .3), ("home", 1.0, 2.0),
+    ("look_up", 1.6, 1.2), ("nod", 1.4, 1.4), ("home", 1.8, 0),
 ]
 
+# Five minutes is long, so acts 1 and 2 come back mirrored left to right before the finale:
+# the fifth act is reached without the viewer ever seeing the same minute twice.
+MIRROR = {"look_l": "look_r", "look_r": "look_l", "tilt_l": "tilt_r", "tilt_r": "tilt_l", "slide_l": "slide_r",
+          "slide_r": "slide_l", "curious_l": "curious_r", "curious_r": "curious_l"}
+ACT3 = next(i for i, s in enumerate(SEQ) if s[0] == "SPIN") - 1   # the crouch before the first spin
+ACT5 = [i for i, s in enumerate(SEQ) if s[0] == "SPIN"][2] - 1    # the crouch before the first flip
+full = SEQ[:ACT5] + [(MIRROR.get(s[0], s[0]), s[1], s[2]) for s in SEQ[:ACT3]] + SEQ[ACT5:]
+t_sum = sum(s[3] if s[0] == "SPIN" else s[1] for s in full)
+h_sum = sum(0 if s[0] == "SPIN" else s[2] for s in full)
+hold_k = (TOTAL_S - t_sum) / h_sum   # stretch the holds so the loop is exactly 5:00
+print("travel", t_sum, "hold", h_sum, "hold_k", hold_k)
+assert hold_k > .2, hold_k
+
+# keys: (frame, value); rotation keys also carry a tangent per frame, the rest are flat
 pos_k, scl_k, rot_k = [], [], []
+moves = []  # used by the antenna and the eyes
 cur_q = Quaternion((1, 0, 0, 0))
-for f, pose in KEYS:
+cur_name = "home"
+t = 0.0
+bob = 1
+
+
+def push(f, pose, q, offs=(0, 0, 0)):
+    pos_k.append((f, tuple(a + b for a, b in zip(pose["pos"], offs))))
+    scl_k.append((f, pose["scl"]))
+    rot_k.append((f, tuple(q), (0, 0, 0, 0)))
+
+
+push(0, POSE["home"], cur_q)
+for s in full:
+    f0 = round(t * FPS)
+    if s[0] == "SPIN":
+        _, axis, sign, T = s
+        f1 = round((t + T) * FPS)
+        ax = Vector({"Z": (0, 0, 1), "X": (1, 0, 0)}[axis])
+        n = 8
+        for i in range(1, n + 1):
+            u = i / n
+            th = sign * 2 * pi * (3 * u * u - 2 * u * u * u)
+            dth = sign * 2 * pi * (6 * u - 6 * u * u) / (f1 - f0)  # radians per frame
+            qa = aa_q(ax, th)
+            q = cur_q @ qa
+            dq = cur_q @ qa @ Quaternion((0, ax.x, ax.y, ax.z))    # dq/dt = 1/2 q (0, w)
+            rot_k.append((f0 + round((f1 - f0) * u), tuple(q), tuple(.5 * dth * c for c in dq)))
+        cur_q = q.copy()
+        mid = (f0 + f1) // 2                                       # arc in the air
+        pos_k.append((mid, (0, 0, .34)))
+        scl_k.append((mid, (.96, .96, 1.05)))
+        pos_k.append((f1, POSE["crouch"]["pos"]))
+        scl_k.append((f1, POSE["crouch"]["scl"]))
+        moves.append(dict(f0=f0, f1=f1, a=cur_name, b="crouch", spin=True))
+        cur_name = "crouch"
+        t += T
+        continue
+    name, travel, hold = s
+    hold *= hold_k
+    pose = POSE[name]
+    f1 = round((t + travel) * FPS)
     tgt = euler_q(pose["yaw"], pose["pitch"], pose["roll"])
     if tgt.dot(cur_q) < 0:
         tgt = Quaternion(tuple(-c for c in tgt))
-    pos_k.append((f, pose["pos"]))
-    scl_k.append((f, pose["scl"]))
-    rot_k.append((f, tuple(tgt), (0, 0, 0, 0)))
-    cur_q = tgt
-assert pos_k[0][1] == pos_k[-1][1] and scl_k[0][1] == scl_k[-1][1] and rot_k[0][1] == rot_k[-1][1]
+    push(f1, pose, tgt)
+    moves.append(dict(f0=f0, f1=f1, a=cur_name, b=name, spin=False))
+    cur_q, cur_name = tgt, name
+    t += travel
+    if hold > .01:
+        f2 = round((t + hold) * FPS)
+        bob = -bob
+        if f1 + 1 < f2 < END:
+            push(f2, pose, tgt, (0, 0, .012 * bob))     # small drift so a hold is never dead
+        t += hold
 
-# ---- gears: 2 whole turns in 6 eased 120 degree pulses (720 degrees returns q to +1)
-GEAR_STEPS = 6
+assert abs(t - TOTAL_S) < 1e-6, t
+assert pos_k[-1][0] == END and rot_k[-1][0] == END, (pos_k[-1], rot_k[-1])
+assert cur_name == "home"
+print("final root q", tuple(cur_q))
+
+# ---- gears: 8 whole turns in 96 eased 30 degree pulses (720k degrees returns q to +1)
+GEAR_STEPS = 96
 gear_frames = [round(END * i / GEAR_STEPS) for i in range(GEAR_STEPS + 1)]
-gear_l_k = [(f, tuple(aa_q((1, 0, 0), radians(120 * i))), (0, 0, 0, 0)) for i, f in enumerate(gear_frames)]
-gear_r_k = [(f, tuple(aa_q((1, 0, 0), -radians(120 * i))), (0, 0, 0, 0)) for i, f in enumerate(gear_frames)]
+gear_l_k = [(f, tuple(aa_q((1, 0, 0), radians(30 * i))), (0, 0, 0, 0)) for i, f in enumerate(gear_frames)]
+gear_r_k = [(f, tuple(aa_q((1, 0, 0), -radians(30 * i))), (0, 0, 0, 0)) for i, f in enumerate(gear_frames)]
 
-# ---- antenna: drags behind each head move, then overshoots as the head stops (overlap)
+
+def clean(keys):
+    """sort, keep one key per frame, minimum gap of 2 frames"""
+    out = []
+    for k in sorted(keys, key=lambda k: k[0]):
+        if not out or k[0] - out[-1][0] >= 2:
+            out.append(k)
+    return out
+
+
+# ---- antenna: drags behind every head move, overshoots, then settles (overlap)
 ant = [(0, (0, 0))]
-for (f0, a), (f1, b) in zip(KEYS, KEYS[1:]):
-    dx = b["pos"][0] - a["pos"][0] + (b["roll"] - a["roll"]) * .012 + (b["yaw"] - a["yaw"]) * .004
-    dy = b["pos"][1] - a["pos"][1] + (b["pitch"] - a["pitch"]) * .012
-    k = (max(-20, min(20, -dx * 42)), max(-20, min(20, dy * 30)))
-    ant.append(((f0 + f1) // 2, k))
-    if f1 + 3 < END:
-        ant.append((f1 + 3, (-k[0] * .5, -k[1] * .5)))
-ant.append((END, (0, 0)))
+for m in moves:
+    a, b = POSE[m["a"]], POSE[m["b"]]
+    if m["spin"]:
+        kick = (0., 16.)
+    else:
+        dx = b["pos"][0] - a["pos"][0] + (b["roll"] - a["roll"]) * .012 + (b["yaw"] - a["yaw"]) * .004
+        dy = b["pos"][1] - a["pos"][1] + (b["pitch"] - a["pitch"]) * .012
+        kick = (-dx * 42, dy * 30)
+    if abs(kick[0]) + abs(kick[1]) < 1:
+        continue
+    k = (max(-20, min(20, kick[0])), max(-20, min(20, kick[1])))
+    T = m["f1"] - m["f0"]
+    ant.append((m["f0"] + 1, (0, 0)))
+    ant.append((m["f0"] + round(T * .45), k))
+    ant.append((m["f1"] + 5, (-k[0] * .55, -k[1] * .55)))
+    ant.append((m["f1"] + 14, (k[0] * .2, k[1] * .2)))
+    ant.append((m["f1"] + 24, (0, 0)))
+ant = [k for k in clean(ant) if k[0] < END - 2] + [(END, (0, 0))]
 ant_k = [(f, tuple(Quaternion((0, 1, 0), radians(ty)) @ Quaternion((1, 0, 0), radians(tx))), (0, 0, 0, 0))
          for f, (ty, tx) in ant]
 
-# ---- eyes: dart just ahead of the head turns, and blink twice
+# ---- eyes: dart ahead of the head, blink on an irregular beat
 eye_rest = Vector((0, EYE_Y, EYE_Z))
-eye_loc = [(f, tuple(eye_rest + Vector((x, 0, 0)))) for f, x in
-           ((0, 0), (12, 0), (18, -.05), (58, -.05), (64, .06), (96, .06), (104, .02), (END, 0))]
-eye_scl = [(f, (1, 1, z)) for f, z in
-           ((0, 1), (70, 1), (73, .1), (77, 1), (104, 1), (107, .1), (111, 1), (END, 1))]
+eye_loc = [(0, tuple(eye_rest))]
+cx = 0.
+for m in moves:
+    nx = max(-.06, min(.06, POSE[m["b"]]["yaw"] * .0025))
+    if abs(nx - cx) < .005:
+        continue
+    f = m["f0"]
+    if f - 6 > eye_loc[-1][0] + 2:
+        eye_loc.append((f - 6, tuple(eye_rest + Vector((cx, 0, 0)))))
+        eye_loc.append((f, tuple(eye_rest + Vector((nx, 0, 0)))))
+        cx = nx
+eye_loc.append((END, tuple(eye_rest)))
+eye_scl = [(0, (1, 1, 1))]
+rng = random.Random(21)
+f = 60
+while f < END - 60:
+    for _ in range(2 if rng.random() < .18 else 1):
+        eye_scl += [(f, (1, 1, 1)), (f + 3, (1, 1, .1)), (f + 7, (1, 1, 1))]
+        f += 12
+    f += rng.randint(70, 190)
+eye_scl.append((END, (1, 1, 1)))
+eye_scl = clean(eye_scl)
+assert eye_scl[-1][0] == END
 
 # ---------------------------------------------------------------- write f-curves
 action = bpy.data.actions.new("RobotLoop")
@@ -302,7 +443,7 @@ action.use_cyclic = True
 
 # ---------------------------------------------------------------- camera, lights, scene settings
 sc.render.fps = FPS
-sc.frame_start, sc.frame_end = 0, END - 1   # frame 120 == frame 0, so playback never shows it twice
+sc.frame_start, sc.frame_end = 0, END - 1   # frame 7200 == frame 0, so playback never shows it twice
 sc.frame_set(0)
 sc.render.resolution_x, sc.render.resolution_y = 1280, 720
 cam = bpy.data.cameras.new("Cam")
@@ -390,7 +531,7 @@ ref = dict(fps=FPS)
 animated = (head, gear_l, gear_r, antenna, eyes)
 for ob in animated:
     ref[ob.name] = []
-for f in range(0, END + 1):
+for f in range(0, END + 1, 13):
     sc.frame_set(f)
     bpy.context.view_layer.update()
     for ob in animated:
@@ -399,7 +540,7 @@ for f in range(0, END + 1):
 sc.frame_set(0)
 with open(os.path.join(OUT, "source", "blender_samples.json"), "w") as fh:
     json.dump(ref, fh)
-print("RESULT", json.dumps(dict(root_keys=len(pos_k), rot_keys=len(rot_k),
-                                ant=len(ant_k), eye_scl=len(eye_scl), eye_loc=len(eye_loc),
+print("RESULT", json.dumps(dict(hold_k=round(hold_k, 3), root_keys=len(pos_k), rot_keys=len(rot_k),
+                                ant=len(ant_k), blink=len(eye_scl), eye_loc=len(eye_loc),
                                 glb=os.path.getsize(os.path.join(OUT, "loop.glb")),
                                 blend=os.path.getsize(os.path.join(OUT, "loop.blend")))))
