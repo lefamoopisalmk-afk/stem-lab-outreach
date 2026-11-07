@@ -308,9 +308,10 @@ function startPlayer(GLB_BASE64) {
     if (playing) {
       if (prev) {
         var dt = (now - prev) / 1000;
-        // a tab in the background pauses the clock rather than skipping ahead
+        // a long gap (background tab, very slow PC) moves on by one short step, so the
+        // animation never skips ahead and never stalls however few frames it gets
+        clock = (clock + Math.min(dt, .25)) % clip.duration;
         if (dt < .25) {
-          clock = (clock + dt) % clip.duration;
           slow += dt; frames++;
           if (frames >= 45) {                    // slow school PC: draw fewer pixels rather than drop frames
             if (slow / frames > 1 / 24 && renderScale > .55) { renderScale *= .8; resize(); }
